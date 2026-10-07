@@ -10,10 +10,10 @@ public:
     virtual ~IDictionary() = default;
 
     // сколько элементов лежит сейчас
-    virtual size_t GetCount() const = 0;
+    virtual size_t GetCount() const = 0; //наследник обязан его написать;
 
     // сколько влезет без перестройки
-    virtual size_t GetCapacity() const = 0;
+    virtual size_t GetCapacity() const = 0;//корзин в хеш-таблице
 
     // возвращает ссылку на значение чтобы его можно было менять прямо в словаре
     // бросает исключение если ключа нет
@@ -22,7 +22,7 @@ public:
     // то же самое только для константного словаря
     virtual const TElement& Get(const TKey& key) const = 0;
 
-    // не бросает исключений
+    // не бросает исключений; есть ли ключ
     virtual bool ContainsKey(const TKey& key) const = 0;
 
     // бросает исключение если такой ключ уже есть

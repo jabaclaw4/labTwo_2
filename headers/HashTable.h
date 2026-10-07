@@ -78,7 +78,7 @@ private:
     // расширение когда элементов стало столько же сколько корзин
     void GrowIfNeeded() {
         size_t capacity = buckets_.GetSize();
-        if (count_ == capacity) {
+        if (count_ >= capacity) {
             size_t newCapacity = static_cast<size_t>(static_cast<double>(capacity) * q_);
             if (newCapacity <= capacity) {
                 newCapacity = capacity + 1;

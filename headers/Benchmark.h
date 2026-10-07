@@ -1,5 +1,5 @@
 #pragma once
-
+//замер времени работы кода на одних и тех же данных чтобы сравнить варианты
 #include <fstream>
 #include <iomanip>
 #include <iostream>
