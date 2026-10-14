@@ -26,8 +26,12 @@ private:
     DynamicArray<Node*> buckets_;
     size_t count_;
     HashFunction hash_;
-    double p_;
-    double q_;
+    // shrinkLoadFactor во сколько раз вместимость должна превышать количество элементов чтобы таблица сжалась: сжатие срабатывает когда
+    // count <= capacity / shrinkLoadFactor
+    // то есть фактический load factor падает ниже 1 / shrinkLoadFactor
+    double shrinkLoadFactor_;
+    // growFactor во сколько раз увеличивается вместимость при росте рост срабатывает когда элементов стало столько же сколько корзин
+    double growFactor_;
 
     size_t IndexFor(const TKey& key, size_t capacity) const {
         return hash_(key) % capacity;
@@ -79,7 +83,7 @@ private:
     void GrowIfNeeded() {
         size_t capacity = buckets_.GetSize();
         if (count_ >= capacity) {
-            size_t newCapacity = static_cast<size_t>(static_cast<double>(capacity) * q_);
+            size_t newCapacity = static_cast<size_t>(static_cast<double>(capacity) * growFactor_);
             if (newCapacity <= capacity) {
                 newCapacity = capacity + 1;
             }
@@ -87,11 +91,11 @@ private:
         }
     }
 
-    // сжатие когда элементов стало не больше чем вместимость делить на p
+    // сжатие когда элементов стало не больше чем вместимость делить на shrinkLoadFactor_
     void ShrinkIfNeeded() {
         size_t capacity = buckets_.GetSize();
-        if (static_cast<double>(count_) <= static_cast<double>(capacity) / p_) {
-            size_t newCapacity = static_cast<size_t>(static_cast<double>(capacity) / q_);
+        if (static_cast<double>(count_) <= static_cast<double>(capacity) / shrinkLoadFactor_) {
+            size_t newCapacity = static_cast<size_t>(static_cast<double>(capacity) / growFactor_);
             if (newCapacity < 1) {
                 newCapacity = 1;
             }
@@ -103,30 +107,64 @@ private:
 
 public:
     // hash хеш функция для ключа
-    // p и q параметры перестройки и должно выполняться p >= q > 1
-    HashTable(HashFunction hash, size_t initialCapacity = 16, double p = 4.0, double q = 2.0)
-            : buckets_(initialCapacity, nullptr), count_(0), hash_(hash), p_(p), q_(q) {
+    // initialCapacity стартовое число корзин
+    // shrinkLoadFactor и growFactor параметры перестройки, должно быть shrinkLoadFactor >= growFactor > 1
+    HashTable(HashFunction hash, size_t initialCapacity = 16,
+              double shrinkLoadFactor = 4.0, double growFactor = 2.0)
+            : buckets_(initialCapacity, nullptr),
+              count_(0),
+              hash_(hash),
+              shrinkLoadFactor_(shrinkLoadFactor),
+              growFactor_(growFactor) {
         if (hash == nullptr) {
             throw std::invalid_argument("HashTable hash function is null");
         }
         if (initialCapacity == 0) {
             throw std::invalid_argument("HashTable capacity must be positive");
         }
-        if (!(q > 1.0) || !(p >= q)) {
-            throw std::invalid_argument("HashTable requires p >= q > 1");
+        if (!(growFactor > 1.0) || !(shrinkLoadFactor >= growFactor)) {
+            throw std::invalid_argument("HashTable requires shrinkLoadFactor >= growFactor > 1");
         }
     }
 
-    HashTable(const HashTable&) = delete;
-    HashTable& operator=(const HashTable&) = delete;
+    // глубокое копирование: цепочки копируются узел за узлом
+    // порядок внутри цепочки сохраняется
+    HashTable(const HashTable& other)
+            : buckets_(other.buckets_.GetSize(), nullptr),
+              count_(other.count_),
+              hash_(other.hash_),
+              shrinkLoadFactor_(other.shrinkLoadFactor_),
+              growFactor_(other.growFactor_) {
+        for (size_t i = 0; i < other.buckets_.GetSize(); ++i) {
+            Node** tail = &buckets_[i];
+            for (Node* cur = other.buckets_[i]; cur != nullptr; cur = cur->next) {
+                *tail = new Node(cur->key, cur->element, nullptr);
+                tail = &(*tail)->next;
+            }
+        }
+    }
+
+    HashTable& operator=(const HashTable& other) {
+        if (this != &other) {
+            HashTable tmp(other);
+            FreeNodes();
+            buckets_ = std::move(tmp.buckets_);
+            count_ = tmp.count_;
+            hash_ = tmp.hash_;
+            shrinkLoadFactor_ = tmp.shrinkLoadFactor_;
+            growFactor_ = tmp.growFactor_;
+            tmp.count_ = 0;
+        }
+        return *this;
+    }
 
     // после перемещения старый объект использовать нельзя
     HashTable(HashTable&& other) noexcept
             : buckets_(std::move(other.buckets_)),
-            count_(other.count_),
-    hash_(other.hash_),
-    p_(other.p_),
-    q_(other.q_) {
+              count_(other.count_),
+              hash_(other.hash_),
+              shrinkLoadFactor_(other.shrinkLoadFactor_),
+              growFactor_(other.growFactor_) {
         other.count_ = 0;
     }
 
@@ -136,8 +174,8 @@ public:
             buckets_ = std::move(other.buckets_);
             count_ = other.count_;
             hash_ = other.hash_;
-            p_ = other.p_;
-            q_ = other.q_;
+            shrinkLoadFactor_ = other.shrinkLoadFactor_;
+            growFactor_ = other.growFactor_;
             other.count_ = 0;
         }
         return *this;
