@@ -1,5 +1,6 @@
 #include "Tests.h"
 
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -126,6 +127,40 @@ namespace {
         CHECK(t.ContainsKey(1));
     }
 
+// глубокое копирование хеш таблицы: копия независима от оригинала
+    void TestHashTableCopy() {
+        HashTable<int, int> t(&HashKey<int>, 4);
+        for (int i = 0; i < 10; ++i) {
+            t.Add(i, i * 10);
+        }
+
+        // copy-конструктор
+        HashTable<int, int> copy = t;
+        CHECK(copy.GetCount() == t.GetCount());
+        CHECK(copy.GetCapacity() == t.GetCapacity());
+        for (int i = 0; i < 10; ++i) {
+            CHECK(copy.Get(i) == i * 10);
+        }
+
+        // изменение копии не влияет на оригинал
+        copy.Add(100, 1000);
+        CHECK(!t.ContainsKey(100));
+        CHECK(copy.ContainsKey(100));
+
+        // изменение оригинала не влияет на копию
+        t.Remove(0);
+        CHECK(!t.ContainsKey(0));
+        CHECK(copy.ContainsKey(0));
+
+        // copy-присваивание
+        HashTable<int, int> assigned(&HashKey<int>, 4);
+        assigned.Add(999, 999);
+        assigned = t;
+        CHECK(assigned.GetCount() == t.GetCount());
+        CHECK(!assigned.ContainsKey(999));
+        CHECK(assigned.Get(5) == 50);
+    }
+
     void TestBinaryTreeBasic() {
         BinaryTree<int, int> tree;
         CHECK_THROWS(tree.Get(1), std::out_of_range);
@@ -184,22 +219,185 @@ namespace {
         CHECK(count(-1000, 1000) == 100);
     }
 
-    void TestBinaryTreeDegenerate() {
+// периодическая перестройка не даёт дереву выродиться в список
+// раньше на упорядоченных данных высота была бы равна n
+    void TestBinaryTreeRebalance() {
         const size_t n = 5000;
         BinaryTree<int, int> sorted;
         DynamicArray<int> sortedKeys = MakeKeys(n, KeyOrder::Sorted);
         for (size_t i = 0; i < n; ++i) {
             sorted.Add(sortedKeys[i], 0);
         }
-        // на упорядоченных ключах дерево превратилось в список
-        CHECK(sorted.GetHeight() == n);
+        // высота ограничена порогом BalancedHeightLimit(n) = 4 * log2(n + 1) + 1
+        // с запасом проверяем что она меньше 100
+        CHECK(sorted.GetHeight() < 100);
+        CHECK(sorted.GetCount() == n);
+        // все ключи на месте
+        for (size_t i = 0; i < n; i += 500) {
+            CHECK(sorted.ContainsKey(sortedKeys[i]));
+        }
+        // порядок ключей при симметричном обходе совпадает с отсортированным
+        auto inOrder = sorted.Traverse(TraverseOrder::InOrder);
+        CHECK(inOrder.GetSize() == n);
+        for (size_t i = 0; i < n; ++i) {
+            CHECK(inOrder[i].first == static_cast<int>(i));
+        }
 
+        // случайное дерево тоже в пределах разумного
         BinaryTree<int, int> random;
         DynamicArray<int> randomKeys = MakeKeys(n, KeyOrder::Random);
         for (size_t i = 0; i < n; ++i) {
             random.Add(randomKeys[i], 0);
         }
         CHECK(random.GetHeight() < 100);
+    }
+
+// все шесть порядков обхода на маленьком дереве известной формы
+// корень 5, левое поддерево 3 с детьми 2 и 4, правое поддерево 8 с детьми 7 и 9
+    void TestBinaryTreeTraverse() {
+        BinaryTree<int, int> tree;
+        int keys[] = {5, 3, 8, 2, 4, 7, 9};
+        for (int k : keys) {
+            tree.Add(k, k * 10);
+        }
+
+        auto checkOrder = [&tree](TraverseOrder order, const int* expected, size_t n) {
+            DynamicArray<std::pair<int, int>> result = tree.Traverse(order);
+            CHECK(result.GetSize() == n);
+            for (size_t i = 0; i < n; ++i) {
+                CHECK(result[i].first == expected[i]);
+                // элемент тоже сохранён — key * 10
+                CHECK(result[i].second == expected[i] * 10);
+            }
+        };
+
+        int pre[] = {5, 3, 2, 4, 8, 7, 9};
+        checkOrder(TraverseOrder::PreOrder, pre, 7);
+
+        int in[] = {2, 3, 4, 5, 7, 8, 9};
+        checkOrder(TraverseOrder::InOrder, in, 7);
+
+        int post[] = {2, 4, 3, 7, 9, 8, 5};
+        checkOrder(TraverseOrder::PostOrder, post, 7);
+
+        int rpre[] = {5, 8, 9, 7, 3, 4, 2};
+        checkOrder(TraverseOrder::ReversePreOrder, rpre, 7);
+
+        int rin[] = {9, 8, 7, 5, 4, 3, 2};
+        checkOrder(TraverseOrder::ReverseInOrder, rin, 7);
+
+        int rpost[] = {9, 7, 8, 4, 2, 3, 5};
+        checkOrder(TraverseOrder::ReversePostOrder, rpost, 7);
+
+        // пустое дерево даёт пустой результат для любого порядка
+        BinaryTree<int, int> empty;
+        CHECK(empty.Traverse(TraverseOrder::PreOrder).IsEmpty());
+        CHECK(empty.Traverse(TraverseOrder::InOrder).IsEmpty());
+        CHECK(empty.Traverse(TraverseOrder::PostOrder).IsEmpty());
+    }
+
+// итератор построен поверх Traverse — просто ходит по готовой последовательности
+    void TestBinaryTreeIterator() {
+        BinaryTree<int, int> tree;
+        int keys[] = {5, 3, 8, 2, 4, 7, 9};
+        for (int k : keys) {
+            tree.Add(k, k * 10);
+        }
+
+        // по умолчанию симметричный обход — возрастание
+        BinaryTree<int, int>::Iterator it = tree.Begin();
+        int expected[] = {2, 3, 4, 5, 7, 8, 9};
+        int idx = 0;
+        while (it.HasNext()) {
+            CHECK(it.Next().first == expected[idx]);
+            ++idx;
+        }
+        CHECK(idx == 7);
+        CHECK(it.GetRemaining() == 0);
+
+        // после обхода HasNext false, Current должно бросать
+        CHECK_THROWS(it.Current(), std::out_of_range);
+        CHECK_THROWS(it.Next(), std::out_of_range);
+
+        // Reset возвращает в начало без повторного обхода
+        it.Reset();
+        CHECK(it.HasNext());
+        CHECK(it.Current().first == 2);
+        CHECK(it.Next().first == 2);
+        CHECK(it.Current().first == 3);
+
+        // явный порядок
+        BinaryTree<int, int>::Iterator preIt = tree.Begin(TraverseOrder::PreOrder);
+        int expectedPre[] = {5, 3, 2, 4, 8, 7, 9};
+        idx = 0;
+        while (preIt.HasNext()) {
+            CHECK(preIt.Next().first == expectedPre[idx]);
+            ++idx;
+        }
+        CHECK(idx == 7);
+
+        // итератор по пустому дереву
+        BinaryTree<int, int> empty;
+        BinaryTree<int, int>::Iterator emptyIt = empty.Begin();
+        CHECK(!emptyIt.HasNext());
+        CHECK_THROWS(emptyIt.Next(), std::out_of_range);
+    }
+
+// глубокое копирование дерева: форма и содержимое сохраняются, копия независима
+    void TestBinaryTreeCopy() {
+        BinaryTree<int, int> a;
+        int keys[] = {5, 3, 8, 2, 4, 7, 9};
+        for (int k : keys) {
+            a.Add(k, k * 10);
+        }
+
+        // copy-конструктор
+        BinaryTree<int, int> b = a;
+        CHECK(b.GetCount() == a.GetCount());
+        CHECK(b.GetHeight() == a.GetHeight());
+        for (int k : keys) {
+            CHECK(b.ContainsKey(k));
+            CHECK(b.Get(k) == k * 10);
+        }
+
+        // форма сохранена — все порядки обхода совпадают
+        auto aPre = a.Traverse(TraverseOrder::PreOrder);
+        auto bPre = b.Traverse(TraverseOrder::PreOrder);
+        CHECK(aPre.GetSize() == bPre.GetSize());
+        for (size_t i = 0; i < aPre.GetSize(); ++i) {
+            CHECK(aPre[i].first == bPre[i].first);
+        }
+
+        // изменение копии не влияет на оригинал
+        b.Add(100, 1000);
+        CHECK(!a.ContainsKey(100));
+        CHECK(b.ContainsKey(100));
+        b.Remove(5);
+        CHECK(a.ContainsKey(5));
+        CHECK(!b.ContainsKey(5));
+
+        // изменение оригинала не влияет на копию
+        a.Add(200, 2000);
+        CHECK(!b.ContainsKey(200));
+
+        // copy-присваивание
+        BinaryTree<int, int> c;
+        c.Add(1, 1);
+        c = a;
+        CHECK(c.GetCount() == a.GetCount());
+        CHECK(c.Get(5) == 50);
+        CHECK(!c.ContainsKey(1));
+    }
+
+// у дерева GetCapacity возвращает GetCount: отдельного понятия вместимости нет
+    void TestBinaryTreeCapacity() {
+        BinaryTree<int, int> tree;
+        CHECK(tree.GetCapacity() == 0);
+        tree.Add(1, 1);
+        tree.Add(2, 2);
+        tree.Add(3, 3);
+        CHECK(tree.GetCapacity() == tree.GetCount());
+        CHECK(tree.GetCapacity() == 3);
     }
 
     void TestCompositeKey() {
@@ -285,10 +483,15 @@ int RunAllTests() {
     RunTest("хеш таблица основные операции", TestHashTableBasic);
     RunTest("хеш таблица перестройка", TestHashTableRebuild);
     RunTest("хеш таблица коллизии", TestHashTableCollisions);
+    RunTest("хеш таблица копирование", TestHashTableCopy);
     RunTest("дерево основные операции", TestBinaryTreeBasic);
     RunTest("дерево удаление", TestBinaryTreeRemove);
     RunTest("дерево диапазон", TestBinaryTreeRange);
-    RunTest("дерево вырождение", TestBinaryTreeDegenerate);
+    RunTest("дерево балансировка", TestBinaryTreeRebalance);
+    RunTest("дерево обходы", TestBinaryTreeTraverse);
+    RunTest("дерево итератор", TestBinaryTreeIterator);
+    RunTest("дерево копирование", TestBinaryTreeCopy);
+    RunTest("дерево вместимость", TestBinaryTreeCapacity);
     RunTest("составной ключ", TestCompositeKey);
     RunTest("индексы против линейного поиска", TestIndexes);
     RunTest("индексы граничные случаи", TestIndexEdgeCases);
